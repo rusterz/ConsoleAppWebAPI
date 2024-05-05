@@ -9,7 +9,6 @@
 
     <ItemGroup>
       <Folder Include="MIddleware" />
-      <Folder Include="Services" />
     </ItemGroup>
 
 </Project>

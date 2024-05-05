@@ -61,8 +61,10 @@ public class DiContainer
         return implementation;
     }
     
-    public T GetService<T>(Guid requestId)
+    public T GetService<T>(Guid requestId = default)
     {
+        if (requestId == default)
+            requestId = Guid.Empty; 
         return (T)GetService(typeof(T), requestId);
     }
     
