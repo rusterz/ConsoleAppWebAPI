@@ -1,9 +1,11 @@
 using System.Net;
 using System.Reflection;
+using System.Text.Json;
 using WebAPI.Controllers.Abstracts;
 using WebAPI.Controllers.Attributes;
 using WebAPI.Controllers.RouteInfo;
 using WebAPI.DI_container;
+using WebAPI.DTOs;
 
 namespace WebAPI.Server;
 
@@ -13,13 +15,11 @@ public class MyHttpServer
     private readonly DiContainer _container;
     private static Dictionary<string, RouteInfo> _routeTable = new Dictionary<string, RouteInfo>();
 
-    public MyHttpServer(string[] prefixes, DiContainer container)
+    public MyHttpServer(string prefix, DiContainer container)
     {
         _listener = new HttpListener();
         _container = container;
-
-        foreach (var prefix in prefixes)
-            _listener.Prefixes.Add(prefix);
+        _listener.Prefixes.Add(prefix);
     }
     
     public async Task Start()
@@ -41,23 +41,10 @@ public class MyHttpServer
             if (_routeTable.TryGetValue(requestUrl, out var routeInfo))
             {
                 var controller = (Controller)container.GetService(routeInfo.ControllerType, requestId);
-                controller.SetContext(context);
-                if (controller != null)
-                {
-                    var response = routeInfo.ControllerMethod.Invoke(controller, null) as Task<string>;
-
-                    string responseBody = await response;
-                    
-                    byte[] buffer = System.Text.Encoding.UTF8.GetBytes(responseBody);
-                    context.Response.ContentType = "application/json";
-                    context.Response.ContentLength64 = buffer.Length;
-                    context.Response.StatusCode = (int)HttpStatusCode.OK;
-                    await context.Response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
-                }
-                else
-                {
-                    context.Response.StatusCode = (int)HttpStatusCode.NotFound;
-                }
+                var parameters = await PrepareParameters(context, routeInfo.ControllerMethod);
+                
+                var response = routeInfo.ControllerMethod.Invoke(controller, parameters) as Task<string>;
+                await SendResponse(context.Response, await response);
             }
             else
             {
@@ -91,5 +78,52 @@ public class MyHttpServer
                 }
             }
         }
+    }
+    
+    private async Task<object[]> PrepareParameters(HttpListenerContext context, MethodInfo method)
+    {
+        var parameters = new List<object>();
+        var methodParams = method.GetParameters();
+
+        foreach (var param in methodParams)
+        {
+            if (param.ParameterType == typeof(HttpListenerContext))
+            {
+                parameters.Add(context);
+            }
+            else if (context.Request.HttpMethod.ToUpper() == "POST" && 
+                (param.ParameterType.IsClass || param.ParameterType.IsValueType && !param.ParameterType.IsPrimitive))
+            {
+                var dto = await ReadRequestBodyAsync(context.Request, param.ParameterType);
+                parameters.Add(dto);
+            }
+            else
+            {
+                parameters.Add(Type.Missing);
+            }
+        }
+    
+        return parameters.ToArray();
+    }
+
+    private async Task<object> ReadRequestBodyAsync(HttpListenerRequest request, Type dtoType)
+    {
+        if (!request.HasEntityBody)
+            return default(Type);
+        
+        using (var reader = new StreamReader(request.InputStream, request.ContentEncoding))
+        {
+            var bodyString = await reader.ReadToEndAsync();
+            return JsonSerializer.Deserialize(bodyString, dtoType);
+        }
+    }
+    
+    private async Task SendResponse(HttpListenerResponse response, string responseBody)
+    {
+        byte[] buffer = System.Text.Encoding.UTF8.GetBytes(responseBody);
+        response.ContentType = "application/json";
+        response.ContentLength64 = buffer.Length;
+        response.StatusCode = (int)HttpStatusCode.OK;
+        await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
     }
 }
