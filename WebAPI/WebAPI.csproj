@@ -8,10 +8,7 @@
     </PropertyGroup>
 
     <ItemGroup>
-      <Folder Include="Controllers" />
       <Folder Include="MIddleware" />
-      <Folder Include="Routing" />
-      <Folder Include="Server" />
       <Folder Include="Services" />
     </ItemGroup>
 
