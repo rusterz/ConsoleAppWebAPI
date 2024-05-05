@@ -6,10 +6,11 @@ class Program
     static async Task Main(string[] args)
     {
         var services = new DiServiceCollection();
-        string[] prefixes = { "http://localhost:5000/" };
+        MyHttpServer.AddControllers(services);
 
         var container = services.GenerateContainer();
-        var server = new MyHttpServer(prefixes, services, container);
+        string[] prefixes = { "http://localhost:5000/" };
+        var server = new MyHttpServer(prefixes, container);
 
         await server.Start();
         Console.WriteLine("Server started on http://localhost:5000/");

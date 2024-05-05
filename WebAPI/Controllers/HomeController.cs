@@ -7,8 +7,9 @@ namespace WebAPI.Controllers;
 public class HomeController : Controller
 {
     [Route("/home", "GET")]
-    public async Task<string> GetHome(HttpListenerContext context)
+    public async Task<string> GetHome()
     {
-        return "{\"message\":\"Welcome to Home!\"}";
+        var responseMessage = "{\"message\":\"Welcome to Home!\"}";
+        return responseMessage;    
     }
 }
