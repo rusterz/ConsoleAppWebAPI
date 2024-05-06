@@ -42,12 +42,18 @@ public class MyHttpServer
                 var controller = (Controller)container.GetService(routeInfo.ControllerType, requestId);
                 var parameters = await PrepareParameters(context, routeInfo.ControllerMethod);
                 
+                if (parameters.Any(p => p == null))
+                {
+                    await SendErrorResponse(context.Response, "Invalid JSON data in request.", HttpStatusCode.BadRequest);
+                    return;
+                }
+
                 var response = routeInfo.ControllerMethod.Invoke(controller, parameters) as Task<string>;
-                await SendResponse(context.Response, await response);
+                await SendJsonResponse(context.Response, await response);
             }
             else
             {
-                context.Response.StatusCode = (int)HttpStatusCode.NotFound;
+                await SendErrorResponse(context.Response, "Route not found.", HttpStatusCode.NotFound);
             }
         }
         finally
@@ -112,17 +118,30 @@ public class MyHttpServer
         
         using (var reader = new StreamReader(request.InputStream, request.ContentEncoding))
         {
-            var bodyString = await reader.ReadToEndAsync();
-            return JsonSerializer.Deserialize(bodyString, dtoType);
+            try
+            {
+                var bodyString = await reader.ReadToEndAsync();
+                return JsonSerializer.Deserialize(bodyString, dtoType);
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
         }
     }
     
-    private async Task SendResponse(HttpListenerResponse response, string responseBody)
+    private async Task SendJsonResponse(HttpListenerResponse response, string responseBody, HttpStatusCode statusCode = HttpStatusCode.OK)
     {
         byte[] buffer = System.Text.Encoding.UTF8.GetBytes(responseBody);
         response.ContentType = "application/json";
         response.ContentLength64 = buffer.Length;
-        response.StatusCode = (int)HttpStatusCode.OK;
+        response.StatusCode = (int)statusCode;
         await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+    }
+
+    private async Task SendErrorResponse(HttpListenerResponse response, string message, HttpStatusCode errorStatusCode)
+    {
+        var errorObject = JsonSerializer.Serialize(new { error = message });
+        await SendJsonResponse(response, errorObject, errorStatusCode);
     }
 }
