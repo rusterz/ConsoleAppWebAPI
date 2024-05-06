@@ -1,5 +1,7 @@
 using System.Net;
+using System.Net.Http;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using WebAPI.Controllers.Abstracts;
 using WebAPI.Controllers.Attributes;
@@ -27,11 +29,13 @@ public class MyHttpServer
         while (true)
         {
             HttpListenerContext context = await _listener.GetContextAsync();
-            await HandleRequest(context, _container);
+            var httpContext = new HttpContext(context);
+
+            await HandleRequest(httpContext);
         }
     }
     
-    private async Task HandleRequest(HttpListenerContext context, DiContainer container)
+    private async Task HandleRequest(IHttpContext context)
     {
         Guid requestId = Guid.NewGuid();
         try
@@ -39,27 +43,27 @@ public class MyHttpServer
             string requestUrl = $"{context.Request.HttpMethod}:{context.Request.Url.AbsolutePath.ToLower()}";
             if (_routeTable.TryGetValue(requestUrl, out var routeInfo))
             {
-                var controller = (Controller)container.GetService(routeInfo.ControllerType, requestId);
+                var controller = (Controller)_container.GetService(routeInfo.ControllerType, requestId);
                 var parameters = await PrepareParameters(context, routeInfo.ControllerMethod);
                 
-                if (parameters.Any(p => p == null))
+                if (parameters.Any(p => p == null) || parameters.Any(p => p == Type.Missing))
                 {
-                    await SendErrorResponse(context.Response, "Invalid JSON data in request.", HttpStatusCode.BadRequest);
+                    await SendErrorResponseAsync(context.Response, "Invalid JSON data in request.", HttpStatusCode.BadRequest);
                     return;
                 }
 
                 var response = routeInfo.ControllerMethod.Invoke(controller, parameters) as Task<string>;
-                await SendJsonResponse(context.Response, await response);
+                await SendJsonResponseAsync(context.Response, await response);
             }
             else
             {
-                await SendErrorResponse(context.Response, "Route not found.", HttpStatusCode.NotFound);
+                await SendErrorResponseAsync(context.Response, "Route not found.", HttpStatusCode.NotFound);
             }
         }
         finally
         {
-            context.Response.OutputStream.Close();
-            container.ClearScopedInstances(requestId); 
+            context.Response.CloseOutputStream();
+            _container.ClearScopedInstances(requestId); 
         }
     }
     
@@ -85,22 +89,35 @@ public class MyHttpServer
         }
     }
     
-    private async Task<object[]> PrepareParameters(HttpListenerContext context, MethodInfo method)
+    private async Task<object[]> PrepareParameters(IHttpContext context, MethodInfo method)
     {
         var parameters = new List<object>();
         var methodParams = method.GetParameters();
 
         foreach (var param in methodParams)
         {
-            if (param.ParameterType == typeof(HttpListenerContext))
+            if (param.ParameterType == typeof(IHttpContext))
             {
                 parameters.Add(context);
             }
             else if (context.Request.HttpMethod.ToUpper() == "POST" && 
-                (param.ParameterType.IsClass || param.ParameterType.IsValueType && !param.ParameterType.IsPrimitive))
+                (param.ParameterType.IsClass || param.ParameterType.IsValueType || param.ParameterType.IsPrimitive))
             {
-                var dto = await ReadRequestBodyAsync(context.Request, param.ParameterType);
-                parameters.Add(dto);
+                var dto = await ReadRequestBodyAsync(context.Request.InputStream, context.Request.ContentEncoding, param.ParameterType);
+                parameters.Add(dto ?? Type.Missing);
+            }
+            else if (context.Request.HttpMethod.ToUpper() == "GET" && 
+                (param.ParameterType.IsValueType || param.ParameterType.IsPrimitive))
+            {
+                string value = context.Request.QueryString[param.Name] ?? context.Request.Headers[param.Name];
+                try
+                {
+                    parameters.Add(Convert.ChangeType(value, param.ParameterType));
+                }
+                catch
+                {
+                    parameters.Add(Type.Missing); 
+                }
             }
             else
             {
@@ -111,12 +128,9 @@ public class MyHttpServer
         return parameters.ToArray();
     }
 
-    private async Task<object> ReadRequestBodyAsync(HttpListenerRequest request, Type dtoType)
-    {
-        if (!request.HasEntityBody)
-            return default(Type);
-        
-        using (var reader = new StreamReader(request.InputStream, request.ContentEncoding))
+    private async Task<object> ReadRequestBodyAsync(Stream inputStream, Encoding contentEncoding, Type dtoType)
+    {       
+        using (var reader = new StreamReader(inputStream, contentEncoding))
         {
             try
             {
@@ -130,18 +144,14 @@ public class MyHttpServer
         }
     }
     
-    private async Task SendJsonResponse(HttpListenerResponse response, string responseBody, HttpStatusCode statusCode = HttpStatusCode.OK)
+    private async Task SendJsonResponseAsync(IResponseContext response, string responseBody, HttpStatusCode statusCode = HttpStatusCode.OK)
     {
-        byte[] buffer = System.Text.Encoding.UTF8.GetBytes(responseBody);
-        response.ContentType = "application/json";
-        response.ContentLength64 = buffer.Length;
-        response.StatusCode = (int)statusCode;
-        await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+        response.SetContentAndWriteAsync(responseBody, "application/json", statusCode);
     }
 
-    private async Task SendErrorResponse(HttpListenerResponse response, string message, HttpStatusCode errorStatusCode)
+    private async Task SendErrorResponseAsync(IResponseContext response, string message, HttpStatusCode errorStatusCode)
     {
         var errorObject = JsonSerializer.Serialize(new { error = message });
-        await SendJsonResponse(response, errorObject, errorStatusCode);
+        await SendJsonResponseAsync(response, errorObject, errorStatusCode);
     }
 }

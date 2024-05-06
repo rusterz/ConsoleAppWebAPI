@@ -8,7 +8,12 @@ public class DiServiceCollection
     {
         return new DiContainer(_serviceDescriptors);
     }
-    
+
+    public void RegisterScoped<TService>(TService implementation)
+    {
+        _serviceDescriptors.Add(new ServiceDescriptor(implementation, ServiceLifeTime.Scoped));
+    }
+
     public void RegisterScoped(Type serviceType)
     {
         _serviceDescriptors.Add(new ServiceDescriptor(serviceType, ServiceLifeTime.Scoped));

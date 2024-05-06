@@ -12,8 +12,7 @@ public class DiContainer
 
     public object GetService(Type type, Guid requestId)
     {
-        var descriptor = _serviceDescriptors
-            .SingleOrDefault(x => x.ServiceType == type);
+        var descriptor = _serviceDescriptors.SingleOrDefault(x => x.ServiceType == type);
 
         if (descriptor == null) 
             throw new Exception($"Service type {type.Name } isn't registered");
@@ -27,24 +26,31 @@ public class DiContainer
                 }
                 return descriptor.Implementation;
             case ServiceLifeTime.Scoped:
-                if (!_scopedInstances.TryGetValue(requestId, out var requestScopedInstances ))
-                {
-                    requestScopedInstances = new Dictionary<Type, object>();
-                    _scopedInstances[requestId] = requestScopedInstances;
-                }
-                if (!requestScopedInstances.TryGetValue(type, out var instance))
-                {
-                    instance = CreateInstance(descriptor, requestId);
-                    requestScopedInstances[type] = instance;
-                }
-                return instance;
+                return GetOrCreateScopedInstance(descriptor, requestId);
             case ServiceLifeTime.Transient:
                 return CreateInstance(descriptor, requestId);
             default:
                 throw new Exception("Unknown service lifetime");
         }
     }
-    
+
+    private object GetOrCreateScopedInstance(ServiceDescriptor descriptor, Guid requestId)
+    {
+        if (!_scopedInstances.TryGetValue(requestId, out var scopedInstances))
+        {
+            scopedInstances = new Dictionary<Type, object>();
+            _scopedInstances[requestId] = scopedInstances;
+        }
+
+        if (!scopedInstances.TryGetValue(descriptor.ServiceType, out var instance))
+        {
+            instance = CreateInstance(descriptor, requestId);
+            scopedInstances[descriptor.ServiceType] = instance;
+        }
+
+        return instance;
+    }
+
     private object CreateInstance(ServiceDescriptor descriptor, Guid requestId)
     {
         var actualType = descriptor.ImplementationType ?? descriptor.ServiceType;
